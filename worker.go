@@ -93,20 +93,23 @@ func (Worker) handleMessage(msg *sqs.Message) error {
 	if StatsEnabled {
 		go StatsClient.Incr("received", nil)
 	}
-	client := http.Client{
-		Timeout: time.Duration(time.Duration(workerConfig.timeout) * time.Second),
-	}
 
 	body := *msg.Body
 
 	reader := bytes.NewReader([]byte(body))
 
-	response, err := client.Post(workerConfig.workerUrl, "application/json", reader)
+	req, err := http.NewRequest("POST", workerConfig.workerUrl, reader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Aws-Sqsd-Receive-Count", "2")
 
+	client := http.Client{
+		Timeout: time.Duration(time.Duration(workerConfig.timeout) * time.Second),
+	}
+	res, err := client.Do(req)
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer res.Body.Close()
 
 	if StatsEnabled {
 		defer func() {
@@ -115,12 +118,12 @@ func (Worker) handleMessage(msg *sqs.Message) error {
 			go StatsClient.Histogram("response_time", diff, nil)
 		}()
 	}
-	if response.StatusCode > 299 || response.StatusCode < 200 {
+	if res.StatusCode > 299 || res.StatusCode < 200 {
 		if StatsEnabled {
-			go StatsClient.Incr("error", []string{response.Status})
+			go StatsClient.Incr("error", []string{res.Status})
 		}
-		io.Copy(os.Stdout, response.Body)
-		return errors.New("Host returned error status (" + response.Status + ")")
+		io.Copy(os.Stdout, res.Body)
+		return errors.New("Host returned error status (" + res.Status + ")")
 	} else {
 		if StatsEnabled {
 			go StatsClient.Incr("success", nil)
